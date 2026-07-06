@@ -12,8 +12,8 @@ fn midi_note_to_freq(note: u8) -> f64 {
 /// The Taptic Engine's continuous events only track frequency down to ~80 Hz;
 /// below that a single tone doesn't read as a pitch anymore. So for low
 /// notes, shift up by octaves until the root clears the floor, then add a
-/// fifth above it as a second simultaneous note - e.g. C2 becomes C3+G3. Two
-/// notes a fifth apart perceptually still reads as "that low note" much
+/// fourth below it as a second simultaneous note - e.g. C2 becomes C3+G2. Two
+/// notes a fourth apart perceptually still reads as "that low note" much
 /// better than one out-of-range tone.
 fn notes_for_low_pitch(note: u8, floor_hz: f64) -> Vec<u8> {
     let mut root = note;
@@ -26,7 +26,7 @@ fn notes_for_low_pitch(note: u8, floor_hz: f64) -> Vec<u8> {
     if root == note {
         vec![note]
     } else {
-        vec![root, root + 7]
+        vec![root, root - 5]
     }
 }
 
@@ -271,8 +271,8 @@ mod low_pitch_tests {
     use super::*;
 
     #[test]
-    fn low_note_splits_into_root_and_fifth() {
-        assert_eq!(notes_for_low_pitch(36, 80.0), vec![48, 55]); // C2 -> C3+G3
+    fn low_note_splits_into_root_and_fourth() {
+        assert_eq!(notes_for_low_pitch(36, 80.0), vec![48, 43]); // C2 -> C3+G2
         assert_eq!(notes_for_low_pitch(60, 80.0), vec![60]);     // C4 stays single
     }
 }
