@@ -1,8 +1,27 @@
+//! # haptrack
+//!
+//! Compiles a small text DSL for drum-style patterns into an AHAP haptic
+//! pattern - think of it as tracker/drum-machine notation for haptics.
+//!
+//! How it works: the file is split into a *definitions* section (before
+//! `begin`) and a *tracks* section (after it). Definitions map a single
+//! letter to a haptic sound (intensity, sharpness, transient vs continuous,
+//! optional sharpness curve); tracks are strings of those letters with
+//! note-duration digits, e.g. `k8k8s8k8` plays a kick-eighth, kick-eighth,
+//! snare-eighth, kick-eighth pattern. A `-` is a rest. See
+//! [`parse_haptic_definition`] for the two supported definition syntaxes and
+//! [`Haptrack::parse_track`] for how the pattern string turns into timed
+//! haptic events.
+//!
+//! Usage: `haptrack <input.hap> [output.ahap]`
+
 use ahap_rs::{Builder, CURVE_HAPTIC_SHARPNESS};
 use clap::Parser;
 use std::fs;
 use std::process;
 
+/// One letter's worth of haptic settings, as parsed from the definitions
+/// section of a `.hap` file.
 #[derive(Debug, Clone)]
 struct HapticDefinition {
     intensity: f64,
@@ -12,6 +31,7 @@ struct HapticDefinition {
     curve: Option<(f64, f64, f64)>, // (start_sharp, end_sharp, duration)
 }
 
+/// Whether a haptic definition renders as a `HapticTransient` or `HapticContinuous` event.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum EventKind {
     Transient,
@@ -24,6 +44,9 @@ impl Default for HapticDefinition {
     }
 }
 
+/// Parser/compiler state: the 128 possible letter definitions, the musical
+/// timing (BPM + time signature), and the [`Builder`] being filled in as
+/// tracks are parsed.
 struct Haptrack {
     definitions: [Option<HapticDefinition>; 128],
     bpm: f64,
@@ -33,10 +56,14 @@ struct Haptrack {
 }
 
 impl Haptrack {
+    /// A fresh parser with no definitions yet and the GM-standard 120 BPM / 4/4 defaults.
     fn new() -> Self {
         Self { definitions: std::array::from_fn(|_| None), bpm: 120.0, numerator: 4, denominator: 4, builder: None }
     }
 
+    /// Reads and compiles a whole `.hap` file: definitions first, then
+    /// `begin`, then one or more track pattern lines (track-name lines like
+    /// `track1` are just labels and are skipped).
     fn parse_file(&mut self, path: &str) -> Result<(), String> {
         let contents = fs::read_to_string(path).map_err(|e| e.to_string())?;
         let mut in_definitions = true;
@@ -67,6 +94,9 @@ impl Haptrack {
         Ok(())
     }
 
+    /// Parses one line of the definitions section: `bpm = ...`, `time = N/D`,
+    /// or `<letter> = <definition>`. Blank lines/comments are filtered out
+    /// by the caller before this runs.
     fn parse_definition_line(&mut self, line: &str) -> Result<(), String> {
         let Some((key, value)) = line.split_once('=') else { return Ok(()) };
         let key = key.trim();
@@ -92,6 +122,11 @@ impl Haptrack {
         Ok(())
     }
 
+    /// Parses one track pattern line (e.g. `k8k8s8k8`) into timed haptic
+    /// events on the shared [`Builder`]. Walks the string character by
+    /// character: a mapped letter emits its event (plus curve, if any) at
+    /// the current beat position and advances by its note duration; `-` is
+    /// a rest that just advances time; anything else is skipped.
     fn parse_track(&mut self, pattern: &str) -> Result<(), String> {
         let builder = self.builder.as_mut().ok_or("no builder initialized (missing 'begin'?)")?;
         let chars: Vec<char> = pattern.chars().collect();
@@ -244,6 +279,9 @@ fn parse_csv_syntax(value: &str) -> Result<HapticDefinition, String> {
     Ok(def)
 }
 
+/// Reads a run of ASCII digits starting at `*i` (the note-duration number
+/// right after a pattern letter, e.g. the `8` in `k8`) and advances `*i`
+/// past them. Defaults to 8 (an eighth note) if parsing fails.
 fn parse_note_duration(chars: &[char], i: &mut usize) -> u32 {
     let start = *i;
     while *i < chars.len() && chars[*i].is_ascii_digit() {

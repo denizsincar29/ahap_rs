@@ -21,22 +21,29 @@ pub use builder::*;
 
 // ---- Parameter ID constants (mirrors the Go package's string constants) ----
 
+/// `EventType` values for the `Event` struct.
 pub const EVENT_TYPE_HAPTIC_TRANSIENT: &str = "HapticTransient";
 pub const EVENT_TYPE_HAPTIC_CONTINUOUS: &str = "HapticContinuous";
 pub const EVENT_TYPE_AUDIO_CUSTOM: &str = "AudioCustom";
 pub const EVENT_TYPE_AUDIO_CONTINUOUS: &str = "AudioContinuous";
 
+/// Static `ParameterID` values for an `Event`'s `EventParameters`.
 pub const PARAM_HAPTIC_INTENSITY: &str = "HapticIntensity";
 pub const PARAM_HAPTIC_SHARPNESS: &str = "HapticSharpness";
 pub const PARAM_HAPTIC_ATTACK_TIME: &str = "HapticAttackTime";
 pub const PARAM_HAPTIC_DECAY_TIME: &str = "HapticDecayTime";
 pub const PARAM_HAPTIC_RELEASE_TIME: &str = "HapticReleaseTime";
 
+/// Dynamic `ParameterID` values for a `ParameterCurve` - these modulate an
+/// already-playing event's intensity/sharpness as a multiplier over time,
+/// rather than setting a fixed value.
 pub const CURVE_HAPTIC_INTENSITY: &str = "HapticIntensityControl";
 pub const CURVE_HAPTIC_SHARPNESS: &str = "HapticSharpnessControl";
 
 // ---- Core data model (field names match the AHAP spec / Go json tags) ----
 
+/// A complete AHAP document: version, metadata, and the pattern (the
+/// ordered list of events and parameter curves).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ahap {
     #[serde(rename = "Version")]
@@ -47,6 +54,8 @@ pub struct Ahap {
     pub pattern: Vec<PatternItem>,
 }
 
+/// Informational-only metadata about an AHAP file. Not read by Apple's
+/// player; useful for humans/tooling inspecting the file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metadata {
     #[serde(rename = "Project")]
@@ -70,6 +79,8 @@ pub struct PatternItem {
     pub parameter_curve: Option<ParameterCurve>,
 }
 
+/// A single haptic or audio event: a transient, a continuous, or an audio
+/// event, depending on `event_type`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     #[serde(rename = "Time")]
@@ -84,6 +95,8 @@ pub struct Event {
     pub event_waveform_path: Option<String>,
 }
 
+/// One `(id, value)` pair inside an `Event`'s `EventParameters` - e.g.
+/// `HapticIntensity` / `0.8`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventParameter {
     #[serde(rename = "ParameterID")]
@@ -92,6 +105,9 @@ pub struct EventParameter {
     pub parameter_value: f64,
 }
 
+/// A dynamic parameter curve: modulates `parameter_id` on an already-playing
+/// event starting at `time`, following `control_points` (each point's `time`
+/// is relative to this curve's own `time`, not absolute).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterCurve {
     #[serde(rename = "ParameterID")]
@@ -102,6 +118,8 @@ pub struct ParameterCurve {
     pub control_points: Vec<ControlPoint>,
 }
 
+/// One point on a [`ParameterCurve`]: a relative time and the parameter
+/// value at that point, interpolated between neighboring points.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlPoint {
     #[serde(rename = "Time")]
@@ -121,6 +139,7 @@ pub struct Envelope {
 }
 
 impl Envelope {
+    /// No envelope shaping - all three fields omitted from the emitted JSON.
     pub fn none() -> Self {
         Self::default()
     }
@@ -141,6 +160,7 @@ impl Envelope {
 }
 
 impl Ahap {
+    /// Starts a new, empty AHAP document (version 1.0, no pattern events yet).
     pub fn new(description: impl Into<String>, created_by: impl Into<String>) -> Self {
         Self {
             version: 1.0,
@@ -154,18 +174,23 @@ impl Ahap {
         }
     }
 
+    /// Appends an already-built [`Event`] (see [`crate::Transient`]/[`crate::Continuous`]).
     pub fn add_event(&mut self, event: Event) {
         self.pattern.push(PatternItem { event: Some(event), parameter_curve: None });
     }
 
+    /// Appends an already-built [`ParameterCurve`] (see [`crate::Curve`]).
     pub fn add_parameter_curve(&mut self, curve: ParameterCurve) {
         self.pattern.push(PatternItem { event: None, parameter_curve: Some(curve) });
     }
 
+    /// Adds a plain `HapticTransient` event with no envelope shaping.
     pub fn add_haptic_transient(&mut self, time: f64, intensity: f64, sharpness: f64) {
         self.add_haptic_transient_envelope(time, intensity, sharpness, Envelope::none());
     }
 
+    /// Adds a `HapticTransient` event with optional attack/decay/release
+    /// envelope shaping (see [`Envelope`]).
     pub fn add_haptic_transient_envelope(&mut self, time: f64, intensity: f64, sharpness: f64, env: Envelope) {
         let mut params = vec![
             EventParameter { parameter_id: PARAM_HAPTIC_INTENSITY.into(), parameter_value: intensity },
@@ -181,10 +206,13 @@ impl Ahap {
         });
     }
 
+    /// Adds a plain `HapticContinuous` event with no envelope shaping.
     pub fn add_haptic_continuous(&mut self, time: f64, duration: f64, intensity: f64, sharpness: f64) {
         self.add_haptic_continuous_envelope(time, duration, intensity, sharpness, Envelope::none());
     }
 
+    /// Adds a `HapticContinuous` event with optional attack/decay/release
+    /// envelope shaping (see [`Envelope`]).
     pub fn add_haptic_continuous_envelope(
         &mut self,
         time: f64,
@@ -207,6 +235,8 @@ impl Ahap {
         });
     }
 
+    /// Adds a parameter curve from raw control points. Prefer [`crate::Curve`]
+    /// for building `control_points` with interpolation helpers.
     pub fn add_curve(&mut self, parameter_id: impl Into<String>, start_time: f64, control_points: Vec<ControlPoint>) {
         self.add_parameter_curve(ParameterCurve {
             parameter_id: parameter_id.into(),
@@ -215,6 +245,7 @@ impl Ahap {
         });
     }
 
+    /// Serializes to a JSON string, pretty-printed if `indent` is true.
     pub fn to_json(&self, indent: bool) -> serde_json::Result<String> {
         if indent {
             serde_json::to_string_pretty(self)
@@ -223,6 +254,7 @@ impl Ahap {
         }
     }
 
+    /// Serializes and writes to `path`.
     pub fn export(&self, path: impl AsRef<Path>, indent: bool) -> io::Result<()> {
         let data = self
             .to_json(indent)

@@ -1,3 +1,7 @@
+//! Interpolation helpers for building `ParameterCurve` control points, plus
+//! `freq_to_sharpness` for mapping a musical pitch onto the haptic
+//! sharpness range.
+
 use crate::ControlPoint;
 
 /// Linear interpolation between (start_time, start_value) and (end_time, end_value).
@@ -16,6 +20,7 @@ pub fn create_curve(start_time: f64, end_time: f64, start_value: f64, end_value:
         .collect()
 }
 
+/// Same as [`create_curve`], but taking `ControlPoint` endpoints directly.
 pub fn linear_interpolation(start: ControlPoint, end: ControlPoint, steps: usize) -> Vec<ControlPoint> {
     create_curve(start.time, end.time, start.parameter_value, end.parameter_value, steps)
 }
@@ -38,6 +43,9 @@ pub fn ease_in_out(start: ControlPoint, end: ControlPoint, steps: usize) -> Vec<
         .collect()
 }
 
+/// Power-curve interpolation between two control points: `value` moves along
+/// `t.powf(exponent)` instead of linearly, so `exponent > 1` front-loads the
+/// change near `end` and `exponent < 1` front-loads it near `start`.
 pub fn exponential(start: ControlPoint, end: ControlPoint, steps: usize, exponent: f64) -> Vec<ControlPoint> {
     let steps = steps.max(1);
     let time_diff = end.time - start.time;

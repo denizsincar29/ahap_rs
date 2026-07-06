@@ -1,3 +1,14 @@
+//! # bike_demo
+//!
+//! Generates the original motorcycle-engine-sound demo AHAP pattern - the
+//! first thing this crate ever did, kept around as a worked example of
+//! hand-building a pattern with [`Builder`]. It's not a general-purpose
+//! tool; it just writes one fixed hardcoded pattern (initial rumble, gear
+//! shift, then 15s of "engine running" transients shaped by a handful of
+//! sharpness curves for acceleration) to the output file.
+//!
+//! Usage: `bike_demo [--output bike.ahap] [--indent]`
+
 use ahap_rs::{Builder, CURVE_HAPTIC_SHARPNESS};
 use clap::Parser;
 

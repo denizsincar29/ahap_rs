@@ -1,3 +1,20 @@
+//! # ahap_repl
+//!
+//! Interactive command-line REPL for building an AHAP pattern by hand, one
+//! event at a time, without writing any Rust or JSON. Useful for quickly
+//! sketching a pattern or poking at specific intensity/sharpness/timing
+//! values to feel out how they translate to a device.
+//!
+//! Commands (typed at the `>` prompt):
+//! - `t <time> <intensity> <sharpness>` - add a transient event
+//! - `c <time> <duration> <intensity> <sharpness>` - add a continuous event
+//! - `beat <beat> <intensity> <sharpness>` - transient at a beat (needs `--bpm`)
+//! - `bar <bar> <intensity> <sharpness>` - transient at a bar (needs `--bpm`)
+//! - `export` - write everything built so far to the output file and exit
+//! - `quit` - exit without saving
+//!
+//! Usage: `ahap_repl [-o output.ahap] [--desc ...] [--creator ...] [--bpm N] [--time N/D]`
+
 use ahap_rs::Builder;
 use clap::Parser;
 use std::io::{self, Write};

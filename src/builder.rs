@@ -1,3 +1,7 @@
+//! Fluent, consuming-self builders for the two haptic event types
+//! (`Transient`, `Continuous`) and for parameter curves, plus a higher-level
+//! [`Builder`] that adds musical (bar/beat) addressing on top.
+
 use crate::{ControlPoint, Envelope, Event, EVENT_TYPE_HAPTIC_CONTINUOUS, EVENT_TYPE_HAPTIC_TRANSIENT};
 use crate::{EventParameter, ParameterCurve, PARAM_HAPTIC_INTENSITY, PARAM_HAPTIC_SHARPNESS};
 use crate::{ease_in_out, exponential, create_curve};
@@ -17,6 +21,8 @@ pub struct Transient {
 }
 
 impl Transient {
+    /// Starts a transient event at `time` seconds, with default
+    /// intensity/sharpness of 0.5 and no envelope.
     pub fn at(time: f64) -> Self {
         Self { time, intensity: 0.5, sharpness: 0.5, envelope: Envelope::none() }
     }
@@ -31,21 +37,25 @@ impl Transient {
         self
     }
 
+    /// Sets the optional `HapticAttackTime` envelope parameter.
     pub fn attack(mut self, v: f64) -> Self {
         self.envelope.attack = Some(v);
         self
     }
 
+    /// Sets the optional `HapticDecayTime` envelope parameter.
     pub fn decay(mut self, v: f64) -> Self {
         self.envelope.decay = Some(v);
         self
     }
 
+    /// Sets the optional `HapticReleaseTime` envelope parameter.
     pub fn release(mut self, v: f64) -> Self {
         self.envelope.release = Some(v);
         self
     }
 
+    /// Finishes the builder into an [`Event`], ready for [`Ahap::add_event`].
     pub fn build(self) -> Event {
         let mut params = vec![
             EventParameter { parameter_id: PARAM_HAPTIC_INTENSITY.into(), parameter_value: self.intensity },
@@ -73,6 +83,8 @@ pub struct Continuous {
 }
 
 impl Continuous {
+    /// Starts a continuous event at `time` seconds lasting `duration`
+    /// seconds, with default intensity/sharpness of 0.5 and no envelope.
     pub fn at(time: f64, duration: f64) -> Self {
         Self { time, duration, intensity: 0.5, sharpness: 0.5, envelope: Envelope::none() }
     }
@@ -87,21 +99,25 @@ impl Continuous {
         self
     }
 
+    /// Sets the optional `HapticAttackTime` envelope parameter.
     pub fn attack(mut self, v: f64) -> Self {
         self.envelope.attack = Some(v);
         self
     }
 
+    /// Sets the optional `HapticDecayTime` envelope parameter.
     pub fn decay(mut self, v: f64) -> Self {
         self.envelope.decay = Some(v);
         self
     }
 
+    /// Sets the optional `HapticReleaseTime` envelope parameter.
     pub fn release(mut self, v: f64) -> Self {
         self.envelope.release = Some(v);
         self
     }
 
+    /// Finishes the builder into an [`Event`], ready for [`Ahap::add_event`].
     pub fn build(self) -> Event {
         let mut params = vec![
             EventParameter { parameter_id: PARAM_HAPTIC_INTENSITY.into(), parameter_value: self.intensity },
@@ -129,15 +145,22 @@ pub struct Curve {
 }
 
 impl Curve {
+    /// Starts a curve for `parameter_id` (e.g. [`crate::CURVE_HAPTIC_INTENSITY`])
+    /// beginning at `start_time` seconds.
     pub fn new(parameter_id: impl Into<String>, start_time: f64) -> Self {
         Self { parameter_id: parameter_id.into(), start_time, points: Vec::new() }
     }
 
+    /// Adds a single fixed control point at `relative_time` (relative to the
+    /// curve's own `start_time`) with `value`. Typically used to pin down
+    /// the curve's starting value before appending an interpolated ramp.
     pub fn anchor(mut self, relative_time: f64, value: f64) -> Self {
         self.points.push(ControlPoint { time: relative_time, parameter_value: value });
         self
     }
 
+    /// Appends a smoothstep-interpolated ramp from `from` to `to`
+    /// (each a `(relative_time, value)` pair), in `steps` points.
     pub fn ease_in_out_to(mut self, from: (f64, f64), to: (f64, f64), steps: usize) -> Self {
         let start = ControlPoint { time: from.0, parameter_value: from.1 };
         let end = ControlPoint { time: to.0, parameter_value: to.1 };
@@ -145,6 +168,7 @@ impl Curve {
         self
     }
 
+    /// Appends a power-curve-interpolated ramp from `from` to `to`.
     pub fn exponential_to(mut self, from: (f64, f64), to: (f64, f64), steps: usize, exponent: f64) -> Self {
         let start = ControlPoint { time: from.0, parameter_value: from.1 };
         let end = ControlPoint { time: to.0, parameter_value: to.1 };
@@ -152,11 +176,14 @@ impl Curve {
         self
     }
 
+    /// Appends a linearly-interpolated ramp from `from` to `to`.
     pub fn linear_to(mut self, from: (f64, f64), to: (f64, f64), steps: usize) -> Self {
         self.points.extend(create_curve(from.0, to.0, from.1, to.1, steps));
         self
     }
 
+    /// Finishes the builder into a [`ParameterCurve`], ready for
+    /// [`Ahap::add_parameter_curve`].
     pub fn build(self) -> ParameterCurve {
         ParameterCurve { parameter_id: self.parameter_id, time: self.start_time, control_points: self.points }
     }
@@ -176,18 +203,23 @@ impl Builder {
         Self { ahap: Ahap::new(description, creator), musical: None }
     }
 
+    /// Enables bar/beat addressing at this BPM (defaulting to 4/4 if no
+    /// time signature has been set yet).
     pub fn with_bpm(mut self, bpm: f64) -> Self {
         let (num, den) = self.musical.map(|m| (m.time_signature.numerator, m.time_signature.denominator)).unwrap_or((4, 4));
         self.musical = Some(crate::MusicalContext::new(bpm, num, den));
         self
     }
 
+    /// Sets the time signature used for bar/beat addressing (defaulting to
+    /// 120 BPM if no BPM has been set yet).
     pub fn with_time_signature(mut self, numerator: u32, denominator: u32) -> Self {
         let bpm = self.musical.map(|m| m.bpm).unwrap_or(120.0);
         self.musical = Some(crate::MusicalContext::new(bpm, numerator, denominator));
         self
     }
 
+    /// Beats per bar (4 if no time signature has been set).
     pub fn beats_per_bar(&self) -> u32 {
         self.musical.map(|m| m.beats_per_bar()).unwrap_or(4)
     }
@@ -198,10 +230,12 @@ impl Builder {
         self.musical.unwrap_or(crate::MusicalContext::new(120.0, 4, 4)).at(bar, beat)
     }
 
+    /// Adds a plain transient event; use [`Transient`] directly for envelope shaping.
     pub fn add_transient(&mut self, time: f64, intensity: f64, sharpness: f64) {
         self.ahap.add_event(Transient::at(time).intensity(intensity).sharpness(sharpness).build());
     }
 
+    /// Adds a plain continuous event; use [`Continuous`] directly for envelope shaping.
     pub fn add_continuous(&mut self, time: f64, duration: f64, intensity: f64, sharpness: f64) {
         self.ahap.add_event(Continuous::at(time, duration).intensity(intensity).sharpness(sharpness).build());
     }
@@ -217,6 +251,7 @@ impl Builder {
         self.ahap.add_parameter_curve(curve.build());
     }
 
+    /// Consumes the builder into the finished [`Ahap`].
     pub fn build(self) -> Ahap {
         self.ahap
     }

@@ -5,7 +5,8 @@ A Rust library + CLI toolset for building Apple Haptic and Audio Pattern (`.ahap
 This started as a single bike-engine-sound demo. It's now a proper Rust port
 of the Go [`apple_haptic_creator`](https://github.com/denizsincar29/apple_haptic_creator)
 project: same four tools, same AHAP output shape, plus a couple of bugs the
-Go version had that are fixed here (see below).
+Go version had that are fixed here (see below). All four CLIs use `clap`
+derive for argument parsing, so `--help`/`--version` work everywhere.
 
 ## Binaries
 
@@ -13,7 +14,10 @@ Go version had that are fixed here (see below).
   channel) notes get instrument-appropriate haptic shapes instead of a single
   flat transient: kicks/toms are a short felt punch, cymbals/open hi-hat get
   a long ringing tail with a decaying intensity curve, snares/sticks stay a
-  crisp instantaneous hit. Melodic notes map pitch to sharpness.
+  crisp instantaneous hit. Melodic notes map pitch to sharpness, and notes
+  below the Taptic Engine's ~80Hz floor are split into two simultaneous
+  notes (root + a fourth below) since a single out-of-range tone doesn't
+  read as a pitch.
 
   ```bash
   cargo run --release --bin midi2ahap -- song.mid song.ahap
@@ -26,18 +30,21 @@ Go version had that are fixed here (see below).
   cargo run --release --bin haptrack -- pattern.hap pattern.ahap
   ```
 
-- **`ahapgen`** - interactive REPL for building a pattern by hand
-  (`t`/`c`/`beat`/`bar`/`export` commands).
+- **`ahap_repl`** (formerly `ahapgen`) - interactive REPL for building a
+  pattern by hand (`t`/`c`/`beat`/`bar`/`export` commands).
 
   ```bash
-  cargo run --release --bin ahapgen -- -o mine.ahap
+  cargo run --release --bin ahap_repl -- -o mine.ahap
   ```
 
-- **`makeahap`** - the original bike-engine-sound demo.
+- **`bike_demo`** (formerly `makeahap`) - the original motorcycle-sound demo
+  pattern, kept as a worked example of hand-building a pattern with `Builder`.
 
   ```bash
-  cargo run --release --bin makeahap -- -output bike.ahap
+  cargo run --release --bin bike_demo -- --output bike.ahap
   ```
+
+Run any binary with `--help` for its full option list.
 
 Since iOS 17, `.ahap` files can be previewed directly via Quick Look, so they
 open straight from the Files app or from messaging apps that support file
@@ -56,6 +63,9 @@ ahap.add_event(Transient::at(0.0).intensity(1.0).sharpness(0.5).build());
 ahap.add_event(Continuous::at(0.5, 0.2).intensity(0.8).sharpness(0.6).build());
 ahap.export("out.ahap", true).unwrap();
 ```
+
+Every public item has a doc comment - run `cargo doc --open` for the full
+generated reference.
 
 ## Notable differences from the Go version
 

@@ -1,3 +1,28 @@
+//! # midi2ahap
+//!
+//! Converts a standard MIDI (`.mid`) file into an AHAP haptic pattern.
+//!
+//! How it works: every track is walked event by event, converting delta
+//! ticks to seconds using the tempo active at that point (tempo changes
+//! mid-track are handled correctly, not just at the start). Two kinds of
+//! MIDI events become haptics:
+//!
+//! - **Channel 10 (GM drum channel), unless `--no-drums`:** each drum note
+//!   is looked up in [`DRUM_MAPPINGS`] and rendered by [`add_drum_hit`]
+//!   according to its [`HapticKind`] - a crisp instantaneous `Transient` for
+//!   snares/sticks, a short felt "punch" (`Continuous` + decay/release
+//!   envelope) for kicks/toms, or a long ringing `Continuous` event with a
+//!   fading intensity curve for cymbals/open hi-hat. An unmapped drum note
+//!   still gets a generic transient so nothing is silently dropped.
+//! - **Everything else (melodic notes):** each note-on/note-off pair becomes
+//!   one `Continuous` event spanning its duration, with pitch mapped to
+//!   [`ahap_rs::freq_to_sharpness`]. Notes below the Taptic Engine's ~80 Hz
+//!   floor are split into two simultaneous notes (see
+//!   [`notes_for_low_pitch`]) since a single out-of-range tone doesn't read
+//!   as a pitch at all.
+//!
+//! Usage: `midi2ahap <input.mid> [output.ahap] [--no-drums]`
+
 use ahap_rs::{freq_to_sharpness, Ahap, Continuous, Curve, Transient, CURVE_HAPTIC_INTENSITY};
 use clap::Parser;
 use midly::{MetaMessage, MidiMessage, Smf, TrackEventKind};
@@ -5,6 +30,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process;
 
+/// Standard equal-temperament MIDI note number to frequency in Hz (A4 = note 69 = 440 Hz).
 fn midi_note_to_freq(note: u8) -> f64 {
     440.0 * 2f64.powf((note as f64 - 69.0) / 12.0)
 }
@@ -30,21 +56,31 @@ fn notes_for_low_pitch(note: u8, floor_hz: f64) -> Vec<u8> {
     }
 }
 
+/// How a drum hit should be rendered as haptics - see the module doc for the
+/// reasoning behind splitting drums into these three shapes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum HapticKind {
+    /// Instantaneous snap: snares, sticks, claves, closed/pedal hi-hat.
     Transient,
+    /// Short felt punch with a bit of body: kicks, toms, congas, bongos.
     Thump,
+    /// Long decaying tail: cymbals, open hi-hat, tambourine, triangle.
     Ringing,
 }
 
+/// Haptic characteristics for one General MIDI percussion note.
 #[derive(Debug, Clone, Copy)]
 struct DrumMapping {
     kind: HapticKind,
     intensity: f64,
     sharpness: f64,
+    /// Event duration in seconds. Only meaningful for `Thump`/`Ringing`
+    /// (rendered as `Continuous` events); ignored for `Transient`.
     duration: f64,
 }
 
+/// Looks up the haptic rendering for a General MIDI percussion note (35-81).
+/// Returns `None` for notes outside the standard GM drum map.
 fn drum_mapping(note: u8) -> Option<DrumMapping> {
     use HapticKind::*;
     let m = |kind, intensity, sharpness, duration| Some(DrumMapping { kind, intensity, sharpness, duration });
