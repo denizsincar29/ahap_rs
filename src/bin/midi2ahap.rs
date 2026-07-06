@@ -234,7 +234,14 @@ fn main() {
     for track in &smf.tracks {
         let mut current_time = 0.0f64;
         let mut micros_per_quarter = 500_000.0f64; // 120 BPM default
-        let mut note_state: HashMap<u8, NoteInfo> = HashMap::new();
+        // Keyed by (channel, note), not just note: a MIDI file with several
+        // channels active at once (very common - almost every real-world
+        // song MIDI has one channel per instrument) can easily have two
+        // channels holding the same pitch simultaneously. Keying by note
+        // alone let a note-on on one channel clobber another channel's
+        // still-open note of the same pitch, corrupting durations or
+        // dropping notes outright.
+        let mut note_state: HashMap<(u8, u8), NoteInfo> = HashMap::new();
 
         for event in track {
             current_time += event.delta.as_int() as f64 / ticks_per_quarter * (micros_per_quarter / 1_000_000.0);
@@ -261,14 +268,14 @@ fn main() {
                                     unknown_drum_count += 1;
                                 }
                             } else {
-                                note_state.insert(key, NoteInfo { start_time: current_time, velocity });
+                                note_state.insert((channel, key), NoteInfo { start_time: current_time, velocity });
                             }
                         }
                         // A NoteOn with velocity 0 is a NoteOff per the MIDI spec.
                         MidiMessage::NoteOn { key, .. } | MidiMessage::NoteOff { key, .. } => {
                             let key = key.as_int();
                             if !(!no_drums && channel == DRUM_CHANNEL) {
-                                if let Some(info) = note_state.remove(&key) {
+                                if let Some(info) = note_state.remove(&(channel, key)) {
                                     let duration = current_time - info.start_time;
                                     if duration > 0.0 {
                                         let intensity = info.velocity as f64 / 127.0;
