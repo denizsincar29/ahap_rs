@@ -188,15 +188,30 @@ struct Cli {
     /// Output .ahap file (default: <input>.ahap next to the input)
     output: Option<String>,
 
-    /// Treat channel 10 as regular melodic notes instead of GM drums
-    #[arg(long)]
+    /// Completely ignore channel 10 (GM drums) - no haptic events at all
+    /// from that channel, only the melodic channels play
+    #[arg(long, conflicts_with = "drums_as_melody")]
     no_drums: bool,
+
+    /// Treat channel 10 as regular melodic notes instead of GM drums,
+    /// rather than dropping it (see --no-drums to drop it instead)
+    #[arg(long)]
+    drums_as_melody: bool,
+
+    /// Print how many note-on events came from each channel (only channels
+    /// with at least one event are listed), to check what's actually in
+    /// the file and whether --no-drums/--drums-as-melody are doing what
+    /// you expect
+    #[arg(long)]
+    debug_channels: bool,
 }
 
 fn main() {
     let cli = Cli::parse();
     let input = &cli.input;
     let no_drums = cli.no_drums;
+    let drums_as_melody = cli.drums_as_melody;
+    let debug_channels = cli.debug_channels;
     let output = cli.output.unwrap_or_else(|| {
         let stem = Path::new(input).file_stem().and_then(|s| s.to_str()).unwrap_or("output");
         let parent = Path::new(input).parent().unwrap_or_else(|| Path::new(""));
@@ -230,6 +245,7 @@ fn main() {
     let mut drum_count = 0u32;
     let mut unknown_drum_count = 0u32;
     let mut melodic_count = 0u32;
+    let mut channel_counts: HashMap<u8, u32> = HashMap::new();
 
     for track in &smf.tracks {
         let mut current_time = 0.0f64;
@@ -256,7 +272,12 @@ fn main() {
                         MidiMessage::NoteOn { key, vel } if vel.as_int() > 0 => {
                             let key = key.as_int();
                             let velocity = vel.as_int();
-                            if !no_drums && channel == DRUM_CHANNEL {
+                            *channel_counts.entry(channel).or_insert(0) += 1;
+                            let is_drum_channel = channel == DRUM_CHANNEL;
+
+                            if is_drum_channel && no_drums {
+                                // Fully ignored: no event, no note_state entry.
+                            } else if is_drum_channel && !drums_as_melody {
                                 let velocity_scale = velocity as f64 / 127.0;
                                 if let Some(map) = drum_mapping(key) {
                                     add_drum_hit(&mut ahap, current_time, map, map.intensity * velocity_scale);
@@ -268,13 +289,17 @@ fn main() {
                                     unknown_drum_count += 1;
                                 }
                             } else {
+                                // Either a melodic channel, or channel 10 with
+                                // --drums-as-melody: treat as a regular note.
                                 note_state.insert((channel, key), NoteInfo { start_time: current_time, velocity });
                             }
                         }
                         // A NoteOn with velocity 0 is a NoteOff per the MIDI spec.
                         MidiMessage::NoteOn { key, .. } | MidiMessage::NoteOff { key, .. } => {
                             let key = key.as_int();
-                            if !(!no_drums && channel == DRUM_CHANNEL) {
+                            let is_drum_channel = channel == DRUM_CHANNEL;
+                            let treated_as_melodic = !is_drum_channel || drums_as_melody;
+                            if treated_as_melodic {
                                 if let Some(info) = note_state.remove(&(channel, key)) {
                                     let duration = current_time - info.start_time;
                                     if duration > 0.0 {
@@ -298,6 +323,16 @@ fn main() {
                 }
                 _ => {}
             }
+        }
+    }
+
+    if debug_channels {
+        println!("Note-on events per channel (1-indexed for readability):");
+        let mut channels: Vec<_> = channel_counts.into_iter().filter(|&(_, n)| n > 0).collect();
+        channels.sort_by_key(|&(ch, _)| ch);
+        for (channel, count) in channels {
+            let marker = if channel == DRUM_CHANNEL { " (GM drum channel)" } else { "" };
+            println!("  channel {}: {count} events{marker}", channel + 1);
         }
     }
 
