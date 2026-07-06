@@ -1,7 +1,7 @@
 use ahap_rs::{freq_to_sharpness, Ahap, Continuous, Curve, Transient, CURVE_HAPTIC_INTENSITY};
+use clap::Parser;
 use midly::{MetaMessage, MidiMessage, Smf, TrackEventKind};
 use std::collections::HashMap;
-use std::env;
 use std::path::Path;
 use std::process;
 
@@ -141,24 +141,31 @@ fn add_drum_hit(ahap: &mut Ahap, t: f64, map: DrumMapping, intensity: f64) {
 
 const DRUM_CHANNEL: u8 = 9; // GM channel 10, 0-indexed
 
+/// Convert a MIDI file to an AHAP haptic pattern, with realistic
+/// per-instrument drum rendering on the GM drum channel (channel 10).
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Cli {
+    /// Input .mid file
+    input: String,
+
+    /// Output .ahap file (default: <input>.ahap next to the input)
+    output: Option<String>,
+
+    /// Treat channel 10 as regular melodic notes instead of GM drums
+    #[arg(long)]
+    no_drums: bool,
+}
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: midi2ahap <input.mid> [output.ahap] [--no-drums]");
-        process::exit(1);
-    }
-    let input = &args[1];
-    let no_drums = args.iter().any(|a| a == "--no-drums");
-    let output = args
-        .iter()
-        .skip(2)
-        .find(|a| !a.starts_with("--"))
-        .cloned()
-        .unwrap_or_else(|| {
-            let stem = Path::new(input).file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-            let parent = Path::new(input).parent().unwrap_or_else(|| Path::new(""));
-            parent.join(format!("{stem}.ahap")).to_string_lossy().into_owned()
-        });
+    let cli = Cli::parse();
+    let input = &cli.input;
+    let no_drums = cli.no_drums;
+    let output = cli.output.unwrap_or_else(|| {
+        let stem = Path::new(input).file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+        let parent = Path::new(input).parent().unwrap_or_else(|| Path::new(""));
+        parent.join(format!("{stem}.ahap")).to_string_lossy().into_owned()
+    });
 
     let data = std::fs::read(input).unwrap_or_else(|e| {
         eprintln!("Failed to read MIDI file: {e}");

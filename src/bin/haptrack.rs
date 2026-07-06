@@ -1,5 +1,5 @@
 use ahap_rs::{Builder, CURVE_HAPTIC_SHARPNESS};
-use std::env;
+use clap::Parser;
 use std::fs;
 use std::process;
 
@@ -258,38 +258,39 @@ fn beat_duration(note_value: u32, denominator: u32) -> f64 {
     (4.0 / note_value as f64) * (denominator as f64 / 4.0)
 }
 
-fn print_usage() {
-    println!("Haptrack (Rust) - Haptic Pattern DSL Compiler");
-    println!();
-    println!("Usage: haptrack <input.hap> [output.ahap]");
-    println!();
-    println!("Haptrack file format:");
-    println!("  # Comments start with #");
-    println!("  bpm = 120");
-    println!("  time = 4/4");
-    println!("  s = snare, 1.0, 0.9, down, 60");
-    println!("  k = kick, 1.0, 0.2");
-    println!("  h = hihat, 0.6, 1.0");
-    println!();
-    println!("  begin");
-    println!("  track1");
-    println!("  k8k8s8k8k8k8s8k8");
-    println!("  track2");
-    println!("  h8h8h8h8h8h8h8h8");
-    println!();
-    println!("Note durations: 1=whole, 2=half, 4=quarter, 8=eighth, 16=sixteenth");
-    println!("Rest: - (dash)");
-    println!("Example: s8-8 means snare eighth note, then rest for eighth note");
+/// Compiles a haptrack DSL file (drum-style patterns written with letters
+/// and note durations) into an AHAP haptic pattern.
+///
+/// File format:
+///   bpm = 120
+///   time = 4/4
+///   s = snare, 1.0, 0.9, down, 60
+///   k = kick, 1.0, 0.2
+///   h = hihat, 0.6, 1.0
+///
+///   begin
+///   track1
+///   k8k8s8k8k8k8s8k8
+///   track2
+///   h8h8h8h8h8h8h8h8
+///
+/// Note durations: 1=whole, 2=half, 4=quarter, 8=eighth, 16=sixteenth.
+/// Rest: - (dash), e.g. s8-8 means a snare eighth note then an eighth rest.
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None, verbatim_doc_comment)]
+struct Cli {
+    /// Input .hap file
+    input: String,
+
+    /// Output .ahap file
+    #[arg(default_value = "output.ahap")]
+    output: String,
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        print_usage();
-        process::exit(1);
-    }
-    let input = &args[1];
-    let output = args.get(2).cloned().unwrap_or_else(|| "output.ahap".to_string());
+    let cli = Cli::parse();
+    let input = &cli.input;
+    let output = cli.output;
 
     let mut parser = Haptrack::new();
     println!("Parsing haptrack file: {input}");

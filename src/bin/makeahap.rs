@@ -1,19 +1,23 @@
 use ahap_rs::{Builder, CURVE_HAPTIC_SHARPNESS};
-use std::env;
+use clap::Parser;
+
+/// Generates the original motorcycle-engine-sound demo AHAP pattern.
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Cli {
+    /// Output .ahap file
+    #[arg(long, default_value = "bike.ahap")]
+    output: String,
+
+    /// Pretty-print the output JSON
+    #[arg(long)]
+    indent: bool,
+}
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let mut output = "bike.ahap".to_string();
-    let mut indent = false;
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-output" if i + 1 < args.len() => { output = args[i + 1].clone(); i += 1; }
-            "-indent" => indent = true,
-            _ => {}
-        }
-        i += 1;
-    }
+    let cli = Cli::parse();
+    let output = cli.output;
+    let indent = cli.indent;
 
     println!("Creating motorcycle sound haptic pattern...");
 

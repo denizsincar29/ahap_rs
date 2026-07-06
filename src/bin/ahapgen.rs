@@ -1,32 +1,43 @@
 use ahap_rs::Builder;
-use std::env;
+use clap::Parser;
 use std::io::{self, Write};
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let mut output = "output.ahap".to_string();
-    let mut description = "Custom haptic pattern".to_string();
-    let mut creator = "AHAP Generator (Rust)".to_string();
-    let mut bpm = 0.0f64;
-    let mut time_signature = (4u32, 4u32);
+/// Interactive REPL for building an AHAP pattern by hand.
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Cli {
+    /// Output .ahap file
+    #[arg(short, long, default_value = "output.ahap")]
+    output: String,
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-o" if i + 1 < args.len() => { output = args[i + 1].clone(); i += 1; }
-            "-desc" if i + 1 < args.len() => { description = args[i + 1].clone(); i += 1; }
-            "-creator" if i + 1 < args.len() => { creator = args[i + 1].clone(); i += 1; }
-            "-bpm" if i + 1 < args.len() => { bpm = args[i + 1].parse().unwrap_or(0.0); i += 1; }
-            "-time" if i + 1 < args.len() => {
-                if let Some((n, d)) = args[i + 1].split_once('/') {
-                    time_signature = (n.parse().unwrap_or(4), d.parse().unwrap_or(4));
-                }
-                i += 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
+    /// Pattern description (AHAP metadata)
+    #[arg(long = "desc", default_value = "Custom haptic pattern")]
+    description: String,
+
+    /// Pattern creator (AHAP metadata)
+    #[arg(long, default_value = "AHAP Generator (Rust)")]
+    creator: String,
+
+    /// BPM for musical (bar/beat) timing - enables the `beat`/`bar` commands
+    #[arg(long, default_value_t = 0.0)]
+    bpm: f64,
+
+    /// Time signature as NUM/DEN, e.g. 4/4
+    #[arg(long = "time", default_value = "4/4")]
+    time_signature: String,
+}
+
+fn main() {
+    let cli = Cli::parse();
+    let output = cli.output;
+    let description = cli.description;
+    let creator = cli.creator;
+    let bpm = cli.bpm;
+    let time_signature = cli
+        .time_signature
+        .split_once('/')
+        .map(|(n, d)| (n.parse().unwrap_or(4), d.parse().unwrap_or(4)))
+        .unwrap_or((4, 4));
 
     let mut builder = Builder::new(description, creator);
     if bpm > 0.0 {
@@ -38,8 +49,8 @@ fn main() {
     println!("Commands:");
     println!("  t <time> <intensity> <sharpness>              - Add transient event");
     println!("  c <time> <duration> <intensity> <sharpness>   - Add continuous event");
-    println!("  beat <beat> <intensity> <sharpness>           - Add transient at beat (requires -bpm)");
-    println!("  bar <bar> <intensity> <sharpness>             - Add transient at bar (requires -bpm)");
+    println!("  beat <beat> <intensity> <sharpness>           - Add transient at beat (requires --bpm)");
+    println!("  bar <bar> <intensity> <sharpness>             - Add transient at bar (requires --bpm)");
     println!("  export                                        - Export to file and exit");
     println!("  quit                                          - Exit without saving");
     println!();
