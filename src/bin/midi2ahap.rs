@@ -9,6 +9,27 @@ fn midi_note_to_freq(note: u8) -> f64 {
     440.0 * 2f64.powf((note as f64 - 69.0) / 12.0)
 }
 
+/// The Taptic Engine's continuous events only track frequency down to ~80 Hz;
+/// below that a single tone doesn't read as a pitch anymore. So for low
+/// notes, shift up by octaves until the root clears the floor, then add a
+/// fifth above it as a second simultaneous note - e.g. C2 becomes C3+G3. Two
+/// notes a fifth apart perceptually still reads as "that low note" much
+/// better than one out-of-range tone.
+fn notes_for_low_pitch(note: u8, floor_hz: f64) -> Vec<u8> {
+    let mut root = note;
+    while midi_note_to_freq(root) < floor_hz {
+        match root.checked_add(12) {
+            Some(next) => root = next,
+            None => break, // already at the top of the MIDI range
+        }
+    }
+    if root == note {
+        vec![note]
+    } else {
+        vec![root, root + 7]
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum HapticKind {
     Transient,
@@ -207,14 +228,16 @@ fn main() {
                                 if let Some(info) = note_state.remove(&key) {
                                     let duration = current_time - info.start_time;
                                     if duration > 0.0 {
-                                        let freq = midi_note_to_freq(key);
-                                        let sharpness = freq_to_sharpness(freq, true).unwrap_or(0.5);
                                         let intensity = info.velocity as f64 / 127.0;
-                                        let event = Continuous::at(info.start_time, duration)
-                                            .intensity(intensity)
-                                            .sharpness(sharpness)
-                                            .build();
-                                        ahap.add_event(event);
+                                        for haptic_note in notes_for_low_pitch(key, 80.0) {
+                                            let freq = midi_note_to_freq(haptic_note);
+                                            let sharpness = freq_to_sharpness(freq, true).unwrap_or(0.5);
+                                            let event = Continuous::at(info.start_time, duration)
+                                                .intensity(intensity)
+                                                .sharpness(sharpness)
+                                                .build();
+                                            ahap.add_event(event);
+                                        }
                                         melodic_count += 1;
                                     }
                                 }
@@ -241,4 +264,15 @@ fn main() {
     }
     println!("  Melodic events (continuous): {melodic_count}");
     println!("  Total haptic events: {}", drum_count + melodic_count);
+}
+
+#[cfg(test)]
+mod low_pitch_tests {
+    use super::*;
+
+    #[test]
+    fn low_note_splits_into_root_and_fifth() {
+        assert_eq!(notes_for_low_pitch(36, 80.0), vec![48, 55]); // C2 -> C3+G3
+        assert_eq!(notes_for_low_pitch(60, 80.0), vec![60]);     // C4 stays single
+    }
 }
