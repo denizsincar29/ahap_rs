@@ -21,7 +21,14 @@
 //!   [`notes_for_low_pitch`]) since a single out-of-range tone doesn't read
 //!   as a pitch at all.
 //!
-//! Usage: `midi2ahap <input.mid> [output.ahap] [--no-drums]`
+//! **Live envelope/brightness control from the MIDI file itself:** standard
+//! General MIDI 2 "Sound Controller" CC messages - CC 73 (Attack Time), CC
+//! 72 (Release Time), CC 75 (Decay Time), CC 74 (Brightness) - override the
+//! computed attack/decay/release and nudge sharpness for every event from
+//! that point on, across every track. See [`GlobalControl`] for the exact
+//! mapping and an important ordering caveat.
+//!
+//! Usage: `midi2ahap <input.mid> [output.ahap] [--no-drums] [--drums-as-melody] [--debug-channels]`
 
 use ahap_rs::{freq_to_sharpness, Ahap, Continuous, Curve, Transient, CURVE_HAPTIC_INTENSITY};
 use clap::Parser;
@@ -135,27 +142,99 @@ fn drum_mapping(note: u8) -> Option<DrumMapping> {
     }
 }
 
+/// Live-updatable global envelope/brightness state, driven by standard
+/// General MIDI 2 "Sound Controller" CC messages found in the file itself:
+/// CC 73 (Attack Time), CC 72 (Release Time), CC 75 (Decay Time), CC 74
+/// (Brightness). These are official GM2 CCs, not invented ones - any DAW
+/// can already draw automation for them. `None` means "no override seen
+/// yet, keep using each drum kind's own computed default"; once a CC is
+/// seen it overrides that field for every event from then on, across every
+/// track (this is *global*, not per-channel), until a new value arrives.
+///
+/// Caveat: tracks are processed one after another, not interleaved in true
+/// chronological order, so a CC on one track only reliably affects events
+/// on tracks processed *after* it. Put control CCs in track 0 (or a
+/// dedicated first track) of a Type-1 file, or use a Type-0 file, to avoid
+/// ordering surprises.
+#[derive(Debug, Clone, Copy, Default)]
+struct GlobalControl {
+    attack: Option<f64>,
+    decay: Option<f64>,
+    release: Option<f64>,
+    /// Additive offset applied to computed sharpness, clamped to [0, 1] after.
+    brightness_offset: f64,
+}
+
+const CC_RELEASE_TIME: u8 = 72;
+const CC_ATTACK_TIME: u8 = 73;
+const CC_BRIGHTNESS: u8 = 74;
+const CC_DECAY_TIME: u8 = 75;
+
+/// Max envelope time a CC value of 127 maps to; 0 maps to 0.0s, linear in between.
+const MAX_ENVELOPE_SECONDS: f64 = 1.0;
+/// Max +/- sharpness offset a CC value of 0/127 maps to (64 = no offset).
+const MAX_BRIGHTNESS_OFFSET: f64 = 0.3;
+
+impl GlobalControl {
+    /// Updates state from one CC message. Returns true if it was one of ours.
+    fn apply_cc(&mut self, controller: u8, value: u8) -> bool {
+        match controller {
+            CC_ATTACK_TIME => {
+                self.attack = Some(value as f64 / 127.0 * MAX_ENVELOPE_SECONDS);
+                true
+            }
+            CC_RELEASE_TIME => {
+                self.release = Some(value as f64 / 127.0 * MAX_ENVELOPE_SECONDS);
+                true
+            }
+            CC_DECAY_TIME => {
+                self.decay = Some(value as f64 / 127.0 * MAX_ENVELOPE_SECONDS);
+                true
+            }
+            CC_BRIGHTNESS => {
+                self.brightness_offset = (value as f64 - 64.0) / 63.0 * MAX_BRIGHTNESS_OFFSET;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn adjust_sharpness(&self, sharpness: f64) -> f64 {
+        (sharpness + self.brightness_offset).clamp(0.0, 1.0)
+    }
+}
+
 /// Renders one drum hit according to its instrument kind. This is the crux of
 /// "realistic" drums: a kick/tom gets a short felt punch (Continuous + decay
 /// envelope), a cymbal/open hi-hat gets a long Continuous event with a fading
 /// intensity curve, and only snares/sticks/etc stay a flat instantaneous Transient.
-fn add_drum_hit(ahap: &mut Ahap, t: f64, map: DrumMapping, intensity: f64) {
+/// `control`'s attack/decay/release/brightness, if set via CC, override the
+/// per-kind computed defaults below.
+fn add_drum_hit(ahap: &mut Ahap, t: f64, map: DrumMapping, intensity: f64, control: &GlobalControl) {
+    let sharpness = control.adjust_sharpness(map.sharpness);
     match map.kind {
         HapticKind::Thump => {
-            let decay = map.duration * 0.6;
-            let release = map.duration * 0.4;
+            let attack = control.attack.unwrap_or(0.0);
+            let decay = control.decay.unwrap_or(map.duration * 0.6);
+            let release = control.release.unwrap_or(map.duration * 0.4);
             let event = Continuous::at(t, map.duration)
                 .intensity(intensity)
-                .sharpness(map.sharpness)
-                .attack(0.0)
+                .sharpness(sharpness)
+                .attack(attack)
                 .decay(decay)
                 .release(release)
                 .build();
             ahap.add_event(event);
         }
         HapticKind::Ringing => {
-            let event = Continuous::at(t, map.duration).intensity(intensity).sharpness(map.sharpness).build();
-            ahap.add_event(event);
+            let mut builder = Continuous::at(t, map.duration).intensity(intensity).sharpness(sharpness);
+            if let Some(a) = control.attack {
+                builder = builder.attack(a);
+            }
+            if let Some(r) = control.release {
+                builder = builder.release(r);
+            }
+            ahap.add_event(builder.build());
 
             // HapticIntensityControl multiplies the event's base HapticIntensity
             // (output = intensity * curve), so this ramps 1.0 -> 0.0, not
@@ -169,8 +248,14 @@ fn add_drum_hit(ahap: &mut Ahap, t: f64, map: DrumMapping, intensity: f64) {
             ahap.add_parameter_curve(curve);
         }
         HapticKind::Transient => {
-            let event = Transient::at(t).intensity(intensity).sharpness(map.sharpness).build();
-            ahap.add_event(event);
+            let mut builder = Transient::at(t).intensity(intensity).sharpness(sharpness);
+            if let Some(a) = control.attack {
+                builder = builder.attack(a);
+            }
+            if let Some(r) = control.release {
+                builder = builder.release(r);
+            }
+            ahap.add_event(builder.build());
         }
     }
 }
@@ -246,6 +331,9 @@ fn main() {
     let mut unknown_drum_count = 0u32;
     let mut melodic_count = 0u32;
     let mut channel_counts: HashMap<u8, u32> = HashMap::new();
+    // Shared across every track on purpose - see GlobalControl's doc comment
+    // for the chronological-ordering caveat that comes with that.
+    let mut control = GlobalControl::default();
 
     for track in &smf.tracks {
         let mut current_time = 0.0f64;
@@ -269,6 +357,9 @@ fn main() {
                 TrackEventKind::Midi { channel, message } => {
                     let channel = channel.as_int();
                     match message {
+                        MidiMessage::Controller { controller, value } => {
+                            control.apply_cc(controller.as_int(), value.as_int());
+                        }
                         MidiMessage::NoteOn { key, vel } if vel.as_int() > 0 => {
                             let key = key.as_int();
                             let velocity = vel.as_int();
@@ -280,7 +371,7 @@ fn main() {
                             } else if is_drum_channel && !drums_as_melody {
                                 let velocity_scale = velocity as f64 / 127.0;
                                 if let Some(map) = drum_mapping(key) {
-                                    add_drum_hit(&mut ahap, current_time, map, map.intensity * velocity_scale);
+                                    add_drum_hit(&mut ahap, current_time, map, map.intensity * velocity_scale, &control);
                                     drum_count += 1;
                                 } else {
                                     let event = Transient::at(current_time).intensity(velocity_scale).sharpness(0.7).build();
@@ -306,12 +397,20 @@ fn main() {
                                         let intensity = info.velocity as f64 / 127.0;
                                         for haptic_note in notes_for_low_pitch(key, 80.0) {
                                             let freq = midi_note_to_freq(haptic_note);
-                                            let sharpness = freq_to_sharpness(freq, true).unwrap_or(0.5);
-                                            let event = Continuous::at(info.start_time, duration)
+                                            let sharpness = control.adjust_sharpness(freq_to_sharpness(freq, true).unwrap_or(0.5));
+                                            let mut builder = Continuous::at(info.start_time, duration)
                                                 .intensity(intensity)
-                                                .sharpness(sharpness)
-                                                .build();
-                                            ahap.add_event(event);
+                                                .sharpness(sharpness);
+                                            if let Some(a) = control.attack {
+                                                builder = builder.attack(a);
+                                            }
+                                            if let Some(d) = control.decay {
+                                                builder = builder.decay(d);
+                                            }
+                                            if let Some(r) = control.release {
+                                                builder = builder.release(r);
+                                            }
+                                            ahap.add_event(builder.build());
                                         }
                                         melodic_count += 1;
                                     }
@@ -359,5 +458,37 @@ mod low_pitch_tests {
     fn low_note_splits_into_root_and_fourth() {
         assert_eq!(notes_for_low_pitch(36, 80.0), vec![48, 43]); // C2 -> C3+G2
         assert_eq!(notes_for_low_pitch(60, 80.0), vec![60]);     // C4 stays single
+    }
+}
+
+#[cfg(test)]
+mod global_control_tests {
+    use super::*;
+
+    #[test]
+    fn cc_values_map_to_seconds_and_offset() {
+        let mut control = GlobalControl::default();
+        assert!(control.apply_cc(CC_ATTACK_TIME, 127));
+        assert!((control.attack.unwrap() - 1.0).abs() < 1e-9);
+
+        assert!(control.apply_cc(CC_RELEASE_TIME, 0));
+        assert!((control.release.unwrap() - 0.0).abs() < 1e-9);
+
+        assert!(control.apply_cc(CC_DECAY_TIME, 64));
+        assert!(control.decay.unwrap() > 0.49 && control.decay.unwrap() < 0.51);
+
+        assert!(control.apply_cc(CC_BRIGHTNESS, 64)); // ~center, near-zero offset
+        assert!(control.adjust_sharpness(0.5) > 0.45 && control.adjust_sharpness(0.5) < 0.55);
+
+        assert!(!control.apply_cc(1, 100)); // unrelated CC (mod wheel) is ignored
+    }
+
+    #[test]
+    fn no_cc_seen_means_no_override() {
+        let control = GlobalControl::default();
+        assert!(control.attack.is_none());
+        assert!(control.decay.is_none());
+        assert!(control.release.is_none());
+        assert_eq!(control.adjust_sharpness(0.42), 0.42);
     }
 }

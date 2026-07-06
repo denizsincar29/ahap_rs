@@ -19,6 +19,20 @@ derive for argument parsing, so `--help`/`--version` work everywhere.
   notes (root + a fourth below) since a single out-of-range tone doesn't
   read as a pitch.
 
+  `--no-drums` drops channel 10 entirely; `--drums-as-melody` treats it as
+  regular melodic notes instead; `--debug-channels` prints a note-on count
+  per channel so you can check what's actually in a file.
+
+  Attack/decay/release and sharpness can also be steered *from inside the
+  MIDI file itself* using the standard General MIDI 2 Sound Controller CCs:
+  CC 73 (Attack Time), CC 72 (Release Time), CC 75 (Decay Time), CC 74
+  (Brightness -> sharpness offset). These are real GM2 CCs, not invented
+  ones, so any DAW can already draw automation for them - draw a CC73 ramp
+  and every event converted after that point gets the new attack time. The
+  values are global (apply to every subsequent event on every channel/track,
+  not just the one the CC was sent on), and each value is mapped 0-127 ->
+  0.0-1.0 seconds (72/73/75) or +/-0.3 sharpness offset (74) linearly.
+
   ```bash
   cargo run --release --bin midi2ahap -- song.mid song.ahap
   ```
