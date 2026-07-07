@@ -1,17 +1,17 @@
-//! # melody2ahap
+//! # msh2ahap
 //!
-//! Compiles a `.hmel` haptic melody file (note letters + rests, no time
-//! signature - see [`ahap_rs::melody`] for the full format) into an `.ahap`
+//! Compiles a `.msh` (Music Haptics) file - note letters + rests, no time
+//! signature, see [`ahap_rs::msh`] for the full format - into an `.ahap`
 //! file.
 
-use ahap_rs::melody::parse_melody;
+use ahap_rs::msh::parse_msh;
 use clap::Parser;
 use std::{fs, process};
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Cli {
-    /// Input .hmel file
+    /// Input .msh file
     input: String,
     /// Output .ahap file
     output: String,
@@ -28,7 +28,7 @@ fn main() {
         }
     };
 
-    let ahap = match parse_melody(&source) {
+    let ahap = match parse_msh(&source) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("Failed to parse {}: {e}", cli.input);

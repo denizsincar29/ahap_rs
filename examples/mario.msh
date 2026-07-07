@@ -1,0 +1,22 @@
+@name mario
+@description super mario bros track
+@tempo 200
+@octave 3  // default octave
+/* default duration eighth */
+@accent-velocity +0.2   // can be with or without +, and - is reverseaccent
+@curve-transition 0.15
+@melody
+@f  // or @forte - intensity = 8.0
+// dash is a rest of the duration
+EE-E-CE- !G---<G---
+// a tied/pitch-bend group: D holds, then glides into E over the last 15%
+// of its own duration (per @curve-transition above)
+(DE) !Bb4
+
+@drums
+// k=kick t=tom s=snare h=closed-hihat x=clap o=open-hihat c=crash r=ride
+k-s-k-s- !k-s-k-!s-
+
+@events
+// a little motor buzz: 5 quick transients 40ms apart
+repeat transient t=0.0 count=5 step=0.04 intensity=0.8 sharpness=0.6

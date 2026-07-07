@@ -14,7 +14,7 @@ use std::path::Path;
 pub mod curves;
 pub mod musical;
 pub mod builder;
-pub mod melody;
+pub mod msh;
 
 pub use curves::*;
 pub use musical::*;
@@ -94,6 +94,44 @@ pub struct Event {
     pub event_duration: Option<f64>,
     #[serde(rename = "EventWaveformPath", skip_serializing_if = "Option::is_none")]
     pub event_waveform_path: Option<String>,
+}
+
+impl Event {
+    /// Returns a copy of this event at a different `time`, everything else
+    /// unchanged. Lets a whole family of events - e.g. a repeated transient
+    /// - be built from one "template" event instead of re-specifying every
+    /// field each time: `base.with_time(base.time + i as f64 * step)`.
+    pub fn with_time(&self, time: f64) -> Self {
+        Self { time, ..self.clone() }
+    }
+
+    /// Returns a copy with `EventDuration` replaced (continuous events only;
+    /// harmless but meaningless on a transient, which has none).
+    pub fn with_duration(&self, duration: f64) -> Self {
+        Self { event_duration: Some(duration), ..self.clone() }
+    }
+
+    /// Returns a copy with the `HapticIntensity` parameter replaced.
+    pub fn with_intensity(&self, intensity: f64) -> Self {
+        let mut e = self.clone();
+        for p in &mut e.event_parameters {
+            if p.parameter_id == PARAM_HAPTIC_INTENSITY {
+                p.parameter_value = intensity;
+            }
+        }
+        e
+    }
+
+    /// Returns a copy with the `HapticSharpness` parameter replaced.
+    pub fn with_sharpness(&self, sharpness: f64) -> Self {
+        let mut e = self.clone();
+        for p in &mut e.event_parameters {
+            if p.parameter_id == PARAM_HAPTIC_SHARPNESS {
+                p.parameter_value = sharpness;
+            }
+        }
+        e
+    }
 }
 
 /// One `(id, value)` pair inside an `Event`'s `EventParameters` - e.g.
@@ -183,6 +221,20 @@ impl Ahap {
     /// Appends an already-built [`ParameterCurve`] (see [`crate::Curve`]).
     pub fn add_parameter_curve(&mut self, curve: ParameterCurve) {
         self.pattern.push(PatternItem { event: None, parameter_curve: Some(curve) });
+    }
+
+    /// Appends `count` copies of `event`, each `step` seconds after the
+    /// last, starting at `event`'s own time (so `event.time` itself is
+    /// unchanged for the first copy). Built for exactly this kind of thing:
+    /// a haptic transient repeated 7 times over 350ms, one every 50ms -
+    /// `ahap.add_repeated(&Transient::at(0.0).intensity(1.0).sharpness(0.3).build(), 7, 0.05)`
+    /// - instead of hand-writing a loop with a running time variable. Uses
+    /// `event.time + i as f64 * step` rather than repeated addition, so
+    /// float error doesn't compound across a long repeat run.
+    pub fn add_repeated(&mut self, event: &Event, count: usize, step: f64) {
+        for i in 0..count {
+            self.add_event(event.with_time(event.time + i as f64 * step));
+        }
     }
 
     /// Adds a plain `HapticTransient` event with no envelope shaping.

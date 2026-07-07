@@ -9,7 +9,7 @@
 //!
 //! Usage: `bike_demo [--output bike.ahap] [--indent]`
 
-use ahap_rs::{Builder, CURVE_HAPTIC_SHARPNESS};
+use ahap_rs::{Builder, Transient, CURVE_HAPTIC_SHARPNESS};
 use clap::Parser;
 
 /// Generates the original motorcycle-engine-sound demo AHAP pattern.
@@ -35,23 +35,25 @@ fn main() {
     let mut builder = Builder::new("bike sound", "Deniz Sincar");
 
     // Initial rumble
-    let mut time = 0.0;
+    let time = 0.0;
     let dur = 0.4;
     builder.add_continuous(time, dur, 0.5, 0.4);
     builder.add_curve(CURVE_HAPTIC_SHARPNESS, time, vec![(0.0, 0.4), (0.4, 0.75)], 10);
 
-    // Gear shift: quick transients
-    time = 0.45;
+    // Gear shift: 7 quick transients, 50ms apart.
+    let gear_shift_start = 0.45;
+    builder.add_repeated(&Transient::at(gear_shift_start).intensity(1.0).sharpness(0.3).build(), 7, 0.05);
+    // Matches the float trajectory of the original hand-written loop
+    // (`time += 0.05` seven times) exactly, rather than `7.0 * 0.05`, which
+    // rounds slightly differently and would shift every later timestamp.
+    let mut time = gear_shift_start;
     for _ in 0..7 {
-        builder.add_transient(time, 1.0, 0.3);
         time += 0.05;
     }
 
-    // Main engine running (15s continuous + rapid transients)
+    // Main engine running (15s continuous + rapid transients, also 50ms apart).
     builder.add_continuous(time, 15.0, 0.75, 0.0);
-    for i in 0..300 {
-        builder.add_transient(time + i as f64 * 0.05, 1.0, 1.0);
-    }
+    builder.add_repeated(&Transient::at(time).intensity(1.0).sharpness(1.0).build(), 300, 0.05);
 
     // Sharpness curves for engine acceleration
     builder.add_curve(CURVE_HAPTIC_SHARPNESS, time, vec![(0.0, 0.0), (0.4, 0.75)], 10);

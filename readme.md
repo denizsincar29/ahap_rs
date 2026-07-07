@@ -2,11 +2,13 @@
 
 A Rust library + CLI toolset for building Apple Haptic and Audio Pattern (`.ahap`) files.
 
-This started as a single bike-engine-sound demo. It's now a proper Rust port
-of the Go [`apple_haptic_creator`](https://github.com/denizsincar29/apple_haptic_creator)
-project: same four tools, same AHAP output shape, plus a couple of bugs the
-Go version had that are fixed here (see below). All four CLIs use `clap`
-derive for argument parsing, so `--help`/`--version` work everywhere.
+This started as a single bike-engine-sound demo. It's grown into a Rust
+toolset covering the same ground as the Go
+[`apple_haptic_creator`](https://github.com/denizsincar29/apple_haptic_creator)
+project (MIDI conversion, a REPL, hand-built demos) plus its own text DSL for
+writing patterns directly (`.msh`, replacing the older separate `haptrack`
+format - see `msh2ahap` below). All CLIs use `clap` derive for argument
+parsing, so `--help`/`--version` work everywhere.
 
 ## Binaries
 
@@ -40,10 +42,11 @@ derive for argument parsing, so `--help`/`--version` work everywhere.
   cargo run --release --bin midi2ahap -- song.mid song.ahap
   ```
 
-- **`melody2ahap`** - compiles a `.hmel` haptic melody file (note letters and
-  rests, no time signature - full format documented in
-  [`ahap_rs::melody`](src/melody.rs)) into `.ahap`. Handy for writing a
-  pattern by ear instead of exporting MIDI from a DAW:
+- **`msh2ahap`** - compiles a `.msh` (Music Haptics) file into `.ahap`. Handy
+  for writing a pattern by ear instead of exporting MIDI from a DAW, or for
+  hand-authoring UI/motor feedback as a readable event list instead of raw
+  timestamps. Full format documented in [`ahap_rs::msh`](src/msh.rs); the
+  short version:
 
   ```
   @tempo 200
@@ -51,28 +54,33 @@ derive for argument parsing, so `--help`/`--version` work everywhere.
   @melody
   @f
   EE-E-CE- !G---<G---
+  (DE) !Bb4
   @drums
   k-s-k-s- !k-s-k-!s-
+  @events
+  repeat transient t=0.45 count=7 step=0.05 intensity=1.0 sharpness=0.3
   ```
 
-  `A`-`G` are notes (`#` for sharp), `-` is a rest, `!` before a note/rest
-  accents it, `<`/`>` shift the octave down/up, and digits after a note
-  override its duration for that symbol (or become the new default in
+  `@melody`: `A`-`G` are notes (`#` for sharp, `b` for flat - `Bb`, `Eb`,
+  etc, real chord-chart spelling), `-` is a rest, `!` before a note/rest/tied
+  group accents it, `<`/`>` shift the octave down/up, and digits after a
+  note override its duration for that symbol (or become the new default in
   `@duration-mode sticky`). Frequencies are clamped to the Taptic Engine's
   80-230 Hz range, with a warning on stderr if a note would have gone
-  outside it. `@drums` switches to a small letter-based drum kit (`k`ick,
-  `t`om, `s`nare, `h`i-hat, e`x`(clap), `o`pen hi-hat, `c`rash, `r`ide) using
-  the same rest/accent/duration syntax.
+  outside it. Notes inside `(...)` are tied into one continuous event that
+  pitch-bends between them - `(DE)` holds D, then glides into E over the
+  last `@curve-transition` fraction (default 10%) of D's own duration.
+
+  `@drums` switches to a small letter-based kit (`k`ick, `t`om, `s`nare,
+  `h`i-hat, e`x`(clap), `o`pen hi-hat, `c`rash, `r`ide) using the same
+  rest/accent/duration syntax as melody.
+
+  `@events` is for non-melodic haptics (motor rumbles, UI feedback) as a
+  line-based DSL instead of notes: `transient`/`continuous`/`repeat`/`curve`,
+  each a kind followed by `key=value` pairs.
 
   ```bash
-  cargo run --release --bin melody2ahap -- song.hmel song.ahap
-  ```
-
-- **`haptrack`** - compiles the haptrack DSL (`.hap` text files defining
-  drum-style patterns with letters, note durations, and curves) to `.ahap`.
-
-  ```bash
-  cargo run --release --bin haptrack -- pattern.hap pattern.ahap
+  cargo run --release --bin msh2ahap -- song.msh song.ahap
   ```
 
 - **`ahap_repl`** (formerly `ahapgen`) - interactive REPL for building a
@@ -100,14 +108,15 @@ previews (Telegram, WhatsApp, etc).
 `examples/` has:
 
 - **`doom.mid` / `doom.ahap`** - the Doom soundtrack, converted with `midi2ahap`.
-- **`mario.hmel` / `mario.ahap`** - a short hand-written `.hmel` pattern
-  (melody + drums) showing off the format, converted with `melody2ahap`.
+- **`mario.msh` / `mario.ahap`** - a short hand-written `.msh` pattern
+  (melody + a tied pitch-bend group + drums + an `@events` section) showing
+  off the format, converted with `msh2ahap`.
 
 Regenerate either with:
 
 ```bash
 cargo run --release --bin midi2ahap -- examples/doom.mid examples/doom.ahap
-cargo run --release --bin melody2ahap -- examples/mario.hmel examples/mario.ahap
+cargo run --release --bin msh2ahap -- examples/mario.msh examples/mario.ahap
 ```
 
 ## Library
@@ -121,6 +130,16 @@ use ahap_rs::{Ahap, Transient, Continuous};
 let mut ahap = Ahap::new("my pattern", "me");
 ahap.add_event(Transient::at(0.0).intensity(1.0).sharpness(0.5).build());
 ahap.add_event(Continuous::at(0.5, 0.2).intensity(0.8).sharpness(0.6).build());
+
+// Build a family of events from one template instead of writing a loop
+// with a running time variable:
+let buzz = Transient::at(0.0).intensity(0.8).sharpness(0.6).build();
+ahap.add_repeated(&buzz, 7, 0.05); // 7 transients, 50ms apart
+
+// Events are immutable - `with_*` returns a modified copy, the original
+// is untouched:
+let louder = buzz.with_intensity(1.0).with_time(1.0);
+
 ahap.export("out.ahap", true).unwrap();
 ```
 
@@ -132,12 +151,10 @@ generated reference.
 - `midi2ahap`'s tempo handling integrates elapsed time per tempo segment
   instead of recomputing all-elapsed-ticks at whatever tempo is current,
   which mattered for MIDI files with tempo changes mid-track.
-- `haptrack`'s definition parser accepts both the DSL's newer
-  `name: type; key=value` syntax and the older comma-separated syntax
-  (`name, intensity, sharpness[, curve_direction, duration_ms]`) that the
-  shipped example `.hap` files actually use - the Go parser only understood
-  the new syntax, so real example files silently fell back to default
-  intensity/sharpness values.
+- The Go version's separate `haptrack` DSL (`.hap` files) has been replaced
+  by `.msh` (`msh2ahap`), which covers the same drum-pattern ground plus
+  melody, tied/pitch-bend groups, and a line-based `@events` DSL for
+  non-melodic haptics, all in one format.
 - Envelope (Attack/Decay/Release) and curve-anchor helpers are built in from
   the start, used by `midi2ahap`'s drum rendering.
 

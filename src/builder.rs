@@ -190,9 +190,9 @@ impl Curve {
 }
 
 /// Higher-level builder wrapping an `Ahap` plus an optional `MusicalContext`,
-/// mirroring Go's `*ahap.Builder`. Used by the DSL/interactive front-ends
-/// (haptrack, ahapgen, makeahap) that want bar/beat addressing and a
-/// slightly less verbose call surface than constructing `Event`s by hand.
+/// mirroring Go's `*ahap.Builder`. Used by DSL/interactive front-ends that
+/// want bar/beat addressing and a slightly less verbose call surface than
+/// constructing `Event`s by hand.
 pub struct Builder {
     ahap: Ahap,
     musical: Option<crate::MusicalContext>,
@@ -238,6 +238,12 @@ impl Builder {
     /// Adds a plain continuous event; use [`Continuous`] directly for envelope shaping.
     pub fn add_continuous(&mut self, time: f64, duration: f64, intensity: f64, sharpness: f64) {
         self.ahap.add_event(Continuous::at(time, duration).intensity(intensity).sharpness(sharpness).build());
+    }
+
+    /// Appends `count` copies of `event`, `step` seconds apart - see
+    /// [`Ahap::add_repeated`].
+    pub fn add_repeated(&mut self, event: &Event, count: usize, step: f64) {
+        self.ahap.add_repeated(event, count, step);
     }
 
     /// Adds a parameter curve from a list of (relative_time, value) points,
