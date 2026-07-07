@@ -25,8 +25,11 @@
 //! General MIDI 2 "Sound Controller" CC messages - CC 73 (Attack Time), CC
 //! 72 (Release Time), CC 75 (Decay Time), CC 74 (Brightness) - override the
 //! computed attack/decay/release and nudge sharpness for every event from
-//! that point on, across every track. See [`GlobalControl`] for the exact
-//! mapping and an important ordering caveat.
+//! that point on, across every track. CC 72/73/75 are *relative*: a CC
+//! value maps to a fraction (0.0-1.0) of each event's own duration, not an
+//! absolute number of seconds, so a CC of 100 never smears a 0.15s note
+//! into a longer hum than the note itself. See [`GlobalControl`] for the
+//! exact mapping and an important ordering caveat.
 //!
 //! Usage: `midi2ahap <input.mid> [output.ahap] [--no-drums] [--drums-as-melody] [--debug-channels]`
 
@@ -151,6 +154,18 @@ fn drum_mapping(note: u8) -> Option<DrumMapping> {
 /// seen it overrides that field for every event from then on, across every
 /// track (this is *global*, not per-channel), until a new value arrives.
 ///
+/// Attack/decay/release are stored as **fractions of each event's own
+/// duration** (0.0-1.0), not absolute seconds. A CC of 127 means "this
+/// whole event is envelope", a CC of 100 means ~0.79 of the event's
+/// duration, etc. - the same relative scheme [`add_drum_hit`]'s `Thump`
+/// case always used (`map.duration * 0.6/0.4`). Storing an absolute
+/// second value here was the original bug: a fixed ~0.79s release from a
+/// CC72=100 completely swallowed 0.15-0.36s note durations, smearing
+/// distinct hits into one continuous hum. Resolving to seconds happens at
+/// the point of use, via [`GlobalControl::attack_for`],
+/// [`GlobalControl::decay_for`], and [`GlobalControl::release_for`], once
+/// the actual event duration is known.
+///
 /// Caveat: tracks are processed one after another, not interleaved in true
 /// chronological order, so a CC on one track only reliably affects events
 /// on tracks processed *after* it. Put control CCs in track 0 (or a
@@ -158,8 +173,11 @@ fn drum_mapping(note: u8) -> Option<DrumMapping> {
 /// ordering surprises.
 #[derive(Debug, Clone, Copy, Default)]
 struct GlobalControl {
+    /// Fraction (0.0-1.0) of an event's duration to use as attack time.
     attack: Option<f64>,
+    /// Fraction (0.0-1.0) of an event's duration to use as decay time.
     decay: Option<f64>,
+    /// Fraction (0.0-1.0) of an event's duration to use as release time.
     release: Option<f64>,
     /// Additive offset applied to computed sharpness, clamped to [0, 1] after.
     brightness_offset: f64,
@@ -170,8 +188,11 @@ const CC_ATTACK_TIME: u8 = 73;
 const CC_BRIGHTNESS: u8 = 74;
 const CC_DECAY_TIME: u8 = 75;
 
-/// Max envelope time a CC value of 127 maps to; 0 maps to 0.0s, linear in between.
-const MAX_ENVELOPE_SECONDS: f64 = 1.0;
+/// Reference duration used to resolve attack/decay/release fractions for
+/// events that have no duration of their own (`Transient` hits are
+/// instantaneous). Keeps CC-driven envelope shaping meaningful even there,
+/// without ever reintroducing an absolute multi-hundred-ms smear.
+const TRANSIENT_REFERENCE_SECONDS: f64 = 0.1;
 /// Max +/- sharpness offset a CC value of 0/127 maps to (64 = no offset).
 const MAX_BRIGHTNESS_OFFSET: f64 = 0.3;
 
@@ -180,15 +201,15 @@ impl GlobalControl {
     fn apply_cc(&mut self, controller: u8, value: u8) -> bool {
         match controller {
             CC_ATTACK_TIME => {
-                self.attack = Some(value as f64 / 127.0 * MAX_ENVELOPE_SECONDS);
+                self.attack = Some(value as f64 / 127.0);
                 true
             }
             CC_RELEASE_TIME => {
-                self.release = Some(value as f64 / 127.0 * MAX_ENVELOPE_SECONDS);
+                self.release = Some(value as f64 / 127.0);
                 true
             }
             CC_DECAY_TIME => {
-                self.decay = Some(value as f64 / 127.0 * MAX_ENVELOPE_SECONDS);
+                self.decay = Some(value as f64 / 127.0);
                 true
             }
             CC_BRIGHTNESS => {
@@ -202,6 +223,21 @@ impl GlobalControl {
     fn adjust_sharpness(&self, sharpness: f64) -> f64 {
         (sharpness + self.brightness_offset).clamp(0.0, 1.0)
     }
+
+    /// Resolves the attack-time CC override to seconds, relative to `duration`.
+    fn attack_for(&self, duration: f64) -> Option<f64> {
+        self.attack.map(|frac| frac * duration)
+    }
+
+    /// Resolves the decay-time CC override to seconds, relative to `duration`.
+    fn decay_for(&self, duration: f64) -> Option<f64> {
+        self.decay.map(|frac| frac * duration)
+    }
+
+    /// Resolves the release-time CC override to seconds, relative to `duration`.
+    fn release_for(&self, duration: f64) -> Option<f64> {
+        self.release.map(|frac| frac * duration)
+    }
 }
 
 /// Renders one drum hit according to its instrument kind. This is the crux of
@@ -214,9 +250,9 @@ fn add_drum_hit(ahap: &mut Ahap, t: f64, map: DrumMapping, intensity: f64, contr
     let sharpness = control.adjust_sharpness(map.sharpness);
     match map.kind {
         HapticKind::Thump => {
-            let attack = control.attack.unwrap_or(0.0);
-            let decay = control.decay.unwrap_or(map.duration * 0.6);
-            let release = control.release.unwrap_or(map.duration * 0.4);
+            let attack = control.attack_for(map.duration).unwrap_or(0.0);
+            let decay = control.decay_for(map.duration).unwrap_or(map.duration * 0.6);
+            let release = control.release_for(map.duration).unwrap_or(map.duration * 0.4);
             let event = Continuous::at(t, map.duration)
                 .intensity(intensity)
                 .sharpness(sharpness)
@@ -228,10 +264,10 @@ fn add_drum_hit(ahap: &mut Ahap, t: f64, map: DrumMapping, intensity: f64, contr
         }
         HapticKind::Ringing => {
             let mut builder = Continuous::at(t, map.duration).intensity(intensity).sharpness(sharpness);
-            if let Some(a) = control.attack {
+            if let Some(a) = control.attack_for(map.duration) {
                 builder = builder.attack(a);
             }
-            if let Some(r) = control.release {
+            if let Some(r) = control.release_for(map.duration) {
                 builder = builder.release(r);
             }
             ahap.add_event(builder.build());
@@ -249,10 +285,10 @@ fn add_drum_hit(ahap: &mut Ahap, t: f64, map: DrumMapping, intensity: f64, contr
         }
         HapticKind::Transient => {
             let mut builder = Transient::at(t).intensity(intensity).sharpness(sharpness);
-            if let Some(a) = control.attack {
+            if let Some(a) = control.attack_for(TRANSIENT_REFERENCE_SECONDS) {
                 builder = builder.attack(a);
             }
-            if let Some(r) = control.release {
+            if let Some(r) = control.release_for(TRANSIENT_REFERENCE_SECONDS) {
                 builder = builder.release(r);
             }
             ahap.add_event(builder.build());
@@ -401,13 +437,13 @@ fn main() {
                                             let mut builder = Continuous::at(info.start_time, duration)
                                                 .intensity(intensity)
                                                 .sharpness(sharpness);
-                                            if let Some(a) = control.attack {
+                                            if let Some(a) = control.attack_for(duration) {
                                                 builder = builder.attack(a);
                                             }
-                                            if let Some(d) = control.decay {
+                                            if let Some(d) = control.decay_for(duration) {
                                                 builder = builder.decay(d);
                                             }
-                                            if let Some(r) = control.release {
+                                            if let Some(r) = control.release_for(duration) {
                                                 builder = builder.release(r);
                                             }
                                             ahap.add_event(builder.build());
@@ -466,7 +502,7 @@ mod global_control_tests {
     use super::*;
 
     #[test]
-    fn cc_values_map_to_seconds_and_offset() {
+    fn cc_values_map_to_fractions_and_offset() {
         let mut control = GlobalControl::default();
         assert!(control.apply_cc(CC_ATTACK_TIME, 127));
         assert!((control.attack.unwrap() - 1.0).abs() < 1e-9);
@@ -481,6 +517,26 @@ mod global_control_tests {
         assert!(control.adjust_sharpness(0.5) > 0.45 && control.adjust_sharpness(0.5) < 0.55);
 
         assert!(!control.apply_cc(1, 100)); // unrelated CC (mod wheel) is ignored
+    }
+
+    #[test]
+    fn cc_release_never_exceeds_short_note_duration() {
+        // This is the exact bug scenario: CC72=100 arriving once at tick 0,
+        // then short drum/melodic notes (0.15-0.36s) later in the file.
+        let mut control = GlobalControl::default();
+        control.apply_cc(CC_RELEASE_TIME, 100);
+
+        let short_note_duration = 0.15;
+        let release = control.release_for(short_note_duration).unwrap();
+        assert!(release <= short_note_duration);
+        assert!((release - short_note_duration * (100.0 / 127.0)).abs() < 1e-9);
+
+        // A longer note gets a proportionally longer release, not the same
+        // fixed absolute time as the short note.
+        let long_note_duration = 1.2;
+        let long_release = control.release_for(long_note_duration).unwrap();
+        assert!((long_release - long_note_duration * (100.0 / 127.0)).abs() < 1e-9);
+        assert!(long_release > release);
     }
 
     #[test]
