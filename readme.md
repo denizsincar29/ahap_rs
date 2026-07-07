@@ -66,14 +66,12 @@ previews (Telegram, WhatsApp, etc).
 
 ## Examples
 
-`examples/` has a couple of real `.mid` files converted with `midi2ahap`,
-alongside their generated `.ahap` output:
+`examples/` has a real `.mid` file converted with `midi2ahap`, alongside its
+generated `.ahap` output:
 
 - **`doom.mid` / `doom.ahap`** - the Doom soundtrack.
-- **`harazgay.mid` / `harazgay.ahap`** - my friend Ludub Ochirov's attempt at
-  writing in the style of Tigran Hamasyan.
 
-Regenerate either with:
+Regenerate with:
 
 ```bash
 cargo run --release --bin midi2ahap -- examples/doom.mid examples/doom.ahap
