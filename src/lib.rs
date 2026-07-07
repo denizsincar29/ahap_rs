@@ -14,6 +14,7 @@ use std::path::Path;
 pub mod curves;
 pub mod musical;
 pub mod builder;
+pub mod melody;
 
 pub use curves::*;
 pub use musical::*;

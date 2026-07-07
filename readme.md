@@ -30,11 +30,42 @@ derive for argument parsing, so `--help`/`--version` work everywhere.
   ones, so any DAW can already draw automation for them - draw a CC73 ramp
   and every event converted after that point gets the new attack time. The
   values are global (apply to every subsequent event on every channel/track,
-  not just the one the CC was sent on), and each value is mapped 0-127 ->
-  0.0-1.0 seconds (72/73/75) or +/-0.3 sharpness offset (74) linearly.
+  not just the one the CC was sent on) and are *relative*: a CC maps to a
+  fraction (0.0-1.0) of each event's own duration, not an absolute number of
+  seconds, so a large release never smears a short note into a longer hum
+  than the note itself. Brightness (CC74) maps 0-127 -> +/-0.3 sharpness
+  offset linearly.
 
   ```bash
   cargo run --release --bin midi2ahap -- song.mid song.ahap
+  ```
+
+- **`melody2ahap`** - compiles a `.hmel` haptic melody file (note letters and
+  rests, no time signature - full format documented in
+  [`ahap_rs::melody`](src/melody.rs)) into `.ahap`. Handy for writing a
+  pattern by ear instead of exporting MIDI from a DAW:
+
+  ```
+  @tempo 200
+  @octave 3
+  @melody
+  @f
+  EE-E-CE- !G---<G---
+  @drums
+  k-s-k-s- !k-s-k-!s-
+  ```
+
+  `A`-`G` are notes (`#` for sharp), `-` is a rest, `!` before a note/rest
+  accents it, `<`/`>` shift the octave down/up, and digits after a note
+  override its duration for that symbol (or become the new default in
+  `@duration-mode sticky`). Frequencies are clamped to the Taptic Engine's
+  80-230 Hz range, with a warning on stderr if a note would have gone
+  outside it. `@drums` switches to a small letter-based drum kit (`k`ick,
+  `t`om, `s`nare, `h`i-hat, e`x`(clap), `o`pen hi-hat, `c`rash, `r`ide) using
+  the same rest/accent/duration syntax.
+
+  ```bash
+  cargo run --release --bin melody2ahap -- song.hmel song.ahap
   ```
 
 - **`haptrack`** - compiles the haptrack DSL (`.hap` text files defining
@@ -66,15 +97,17 @@ previews (Telegram, WhatsApp, etc).
 
 ## Examples
 
-`examples/` has a real `.mid` file converted with `midi2ahap`, alongside its
-generated `.ahap` output:
+`examples/` has:
 
-- **`doom.mid` / `doom.ahap`** - the Doom soundtrack.
+- **`doom.mid` / `doom.ahap`** - the Doom soundtrack, converted with `midi2ahap`.
+- **`mario.hmel` / `mario.ahap`** - a short hand-written `.hmel` pattern
+  (melody + drums) showing off the format, converted with `melody2ahap`.
 
-Regenerate with:
+Regenerate either with:
 
 ```bash
 cargo run --release --bin midi2ahap -- examples/doom.mid examples/doom.ahap
+cargo run --release --bin melody2ahap -- examples/mario.hmel examples/mario.ahap
 ```
 
 ## Library
