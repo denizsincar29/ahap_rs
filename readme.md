@@ -64,6 +64,21 @@ Since iOS 17, `.ahap` files can be previewed directly via Quick Look, so they
 open straight from the Files app or from messaging apps that support file
 previews (Telegram, WhatsApp, etc).
 
+## Examples
+
+`examples/` has a couple of real `.mid` files converted with `midi2ahap`,
+alongside their generated `.ahap` output:
+
+- **`doom.mid` / `doom.ahap`** - the Doom soundtrack.
+- **`harazgay.mid` / `harazgay.ahap`** - my friend Ludub Ochirov's attempt at
+  writing in the style of Tigran Hamasyan.
+
+Regenerate either with:
+
+```bash
+cargo run --release --bin midi2ahap -- examples/doom.mid examples/doom.ahap
+```
+
 ## Library
 
 `ahap_rs` also works as a plain library if you want to build patterns from
